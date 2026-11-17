@@ -4,18 +4,15 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="theme-color" content="#000000" />
-  <meta name="mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-capable" content="yes" />
-  <title>ABYSSAL — Water Light Instrument</title>
-  <link rel="manifest" href="manifest.json" />
+  <title>ABYSSAL — Acoustic Lab (Glass &amp; Droplets: Option A)</title>
   <style>
     * {
       box-sizing: border-box;
       margin: 0;
       padding: 0;
-      -webkit-tap-highlight-color: transparent;
       user-select: none;
       -webkit-user-select: none;
+      -webkit-tap-highlight-color: transparent;
     }
 
     html, body {
@@ -23,278 +20,44 @@
       height: 100%;
       overflow: hidden;
       background: #000000;
-      color: #d8e4f0;
+      color: rgba(200, 215, 230, 0.45);
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      overscroll-behavior: none;
     }
 
-    #waterCanvas {
+    #touchSurface {
       position: fixed;
       inset: 0;
       width: 100%;
       height: 100%;
-      display: block;
-      touch-action: none;
       background: #000000;
+      touch-action: none;
+      cursor: crosshair;
     }
 
-    /* Faint initial wake-up hint that vanishes permanently on first touch */
-    #introPrompt {
+    #status {
       position: fixed;
       inset: 0;
       display: flex;
-      flex-direction: column;
       align-items: center;
       justify-content: center;
       pointer-events: none;
-      transition: opacity 1.1s ease;
-      z-index: 5;
+      font-size: 12px;
+      letter-spacing: 0.3em;
+      text-transform: uppercase;
+      transition: opacity 0.9s ease;
       text-align: center;
       padding: 24px;
     }
 
-    #introPrompt.hidden {
+    #status.hidden {
       opacity: 0;
-    }
-
-    #introPrompt .title {
-      font-size: 13px;
-      letter-spacing: 0.45em;
-      text-transform: uppercase;
-      color: rgba(190, 215, 240, 0.48);
-      margin-bottom: 12px;
-    }
-
-    #introPrompt .sub {
-      font-size: 12px;
-      letter-spacing: 0.14em;
-      color: rgba(150, 180, 210, 0.28);
-    }
-
-    /* Tiny barely-visible top dot for live tuning */
-    #menuDot {
-      position: fixed;
-      top: 12px;
-      left: 50%;
-      transform: translateX(-50%);
-      width: 36px;
-      height: 22px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      z-index: 20;
-      cursor: pointer;
-      opacity: 0.28;
-      transition: opacity 0.3s ease;
-    }
-
-    #menuDot::after {
-      content: "";
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
-      background: rgba(180, 220, 255, 0.75);
-      box-shadow: 0 0 8px rgba(120, 200, 255, 0.6);
-    }
-
-    #menuDot:hover, #menuDot.active {
-      opacity: 0.9;
-    }
-
-    /* Minimal translucent drawer */
-    #panel {
-      position: fixed;
-      top: 42px;
-      left: 50%;
-      transform: translateX(-50%) translateY(-8px);
-      width: min(92vw, 390px);
-      background: rgba(6, 10, 16, 0.86);
-      backdrop-filter: blur(18px);
-      -webkit-backdrop-filter: blur(18px);
-      border: 1px solid rgba(130, 180, 230, 0.16);
-      border-radius: 16px;
-      padding: 16px 18px;
-      z-index: 25;
-      opacity: 0;
-      pointer-events: none;
-      transition: opacity 0.25s ease, transform 0.25s ease;
-      font-size: 12px;
-    }
-
-    #panel.open {
-      opacity: 1;
-      pointer-events: auto;
-      transform: translateX(-50%) translateY(0);
-    }
-
-    .row {
-      margin-bottom: 13px;
-    }
-
-    .row:last-child {
-      margin-bottom: 0;
-    }
-
-    .label-line {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 6px;
-      color: rgba(205, 225, 245, 0.72);
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
-      font-size: 10px;
-    }
-
-    .segmented {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 6px;
-    }
-
-    .segmented button, select {
-      background: rgba(255, 255, 255, 0.05);
-      border: 1px solid rgba(150, 200, 255, 0.14);
-      color: rgba(220, 235, 250, 0.8);
-      border-radius: 8px;
-      padding: 7px 6px;
-      font-size: 11px;
-      cursor: pointer;
-      outline: none;
-    }
-
-    .segmented button.active {
-      background: rgba(90, 180, 245, 0.22);
-      border-color: rgba(120, 210, 255, 0.55);
-      color: #ffffff;
-    }
-
-    select {
-      width: 100%;
-    }
-
-    input[type="range"] {
-      width: 100%;
-      accent-color: #6bc8ff;
-      height: 4px;
-      cursor: pointer;
-    }
-
-    .quad-legend {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 6px;
-      padding-top: 8px;
-      border-top: 1px solid rgba(255, 255, 255, 0.08);
-      font-size: 10px;
-      color: rgba(180, 205, 230, 0.55);
-    }
-
-    .quad-legend span b {
-      color: rgba(215, 235, 255, 0.85);
-      font-weight: 500;
-    }
-
-    #statusToast {
-      position: fixed;
-      bottom: 18px;
-      left: 50%;
-      transform: translateX(-50%);
-      background: rgba(15, 20, 28, 0.85);
-      border: 1px solid rgba(130, 190, 240, 0.25);
-      color: rgba(210, 230, 250, 0.88);
-      padding: 8px 14px;
-      border-radius: 999px;
-      font-size: 11px;
-      letter-spacing: 0.04em;
-      pointer-events: none;
-      opacity: 0;
-      transition: opacity 0.35s ease;
-      z-index: 30;
-      white-space: nowrap;
-    }
-
-    #statusToast.show {
-      opacity: 1;
     }
   </style>
 </head>
 <body>
-  <canvas id="waterCanvas"></canvas>
+  <div id="touchSurface"></div>
+  <div id="status">touch to load csound acoustic engine</div>
 
-  <div id="introPrompt">
-    <div class="title">touch the dark water</div>
-    <div class="sub">tap · hold · glide · multi-touch</div>
-  </div>
-
-  <div id="menuDot" title="Instrument Tuning"></div>
-
-  <div id="panel">
-    <div class="row">
-      <div class="label-line">
-        <span>Pitch Engine</span>
-        <span id="pitchModeVal">Magnetic (4B)</span>
-      </div>
-      <div class="segmented" id="pitchModeBtns">
-        <button data-mode="magnetic" class="active">Magnetic</button>
-        <button data-mode="continuous">Ocean</button>
-        <button data-mode="scale">Scales</button>
-      </div>
-    </div>
-
-    <div class="row" id="gravityRow">
-      <div class="label-line">
-        <span>Magnetic Pull</span>
-        <span id="gravityVal">60%</span>
-      </div>
-      <input id="gravitySlider" type="range" min="0" max="100" value="60" />
-    </div>
-
-    <div class="row">
-      <div class="label-line">
-        <span>Harmonic Field</span>
-      </div>
-      <select id="scaleSelect">
-        <option value="minor9">Abyssal Minor 9th</option>
-        <option value="lydian">Lydian Dream</option>
-        <option value="hirajoshi">Hirajoshi Glass</option>
-        <option value="pentatonic">Deep Pentatonic</option>
-      </select>
-    </div>
-
-    <div class="row">
-      <div class="label-line">
-        <span>Echo &amp; Space</span>
-        <span id="spaceVal">72%</span>
-      </div>
-      <input id="spaceSlider" type="range" min="0" max="100" value="72" />
-    </div>
-
-    <div class="row">
-      <div class="label-line">
-        <span>Color Mood</span>
-      </div>
-      <select id="paletteSelect">
-        <option value="auto">Auto (Sound &amp; Harmony Driven)</option>
-        <option value="abyss">Abyssal Melancholy</option>
-        <option value="aurora">Bioluminescent Aurora</option>
-        <option value="glass">Moonlit Glass</option>
-        <option value="twilight">Twilight Bloom</option>
-      </select>
-    </div>
-
-    <div class="quad-legend">
-      <span><b>TL:</b> Granular Mist</span>
-      <span><b>TR:</b> Glass &amp; Droplets</span>
-      <span><b>BL:</b> Ethereal Shimmer</span>
-      <span><b>BR:</b> Abyssal Current</span>
-    </div>
-  </div>
-
-  <div id="statusToast"></div>
-
-  <script src="water-engine.js" defer></script>
-  <script src="audio-engine.js" defer></script>
-  <script src="main.js" defer></script>
+  <script type="module" src="./src/csound-host.js"></script>
 </body>
 </html>
