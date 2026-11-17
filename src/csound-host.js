@@ -23,7 +23,6 @@ let isBooting = false;
 let isReady = false;
 let needsTapUnmute = false;
 
-// Stores raw TouchEvent sensor data from touchstart (fires right before pointerdown)
 const rawTouchQueue = [];
 
 function setStatus(text, hideAfterMs = 0) {
@@ -39,7 +38,7 @@ function showTelemetry(text) {
   telemetryEl.textContent = text;
   telemetryEl.classList.add('show');
   clearTimeout(showTelemetry._t);
-  showTelemetry._t = setTimeout(() => telemetryEl.classList.remove('show'), 2500);
+  showTelemetry._t = setTimeout(() => telemetryEl.classList.remove('show'), 2200);
 }
 
 function withTimeout(promise, ms, label) {
@@ -85,83 +84,108 @@ function matchTouchMeta(clientX, clientY) {
   return null;
 }
 
+/**
+ * Calibrated using real Z Fold 6 TouchEvent geometry (~437px² tip to ~2815px² flat thumb)
+ * while still expanding dynamically if a lighter/wider touch occurs.
+ */
 const touchCal = {
-  minArea: Infinity,
-  maxArea: 0,
-  minForce: Infinity,
-  maxForce: 0,
+  minArea: 420,
+  maxArea: 2450,
+  minForce: 0.06,
+  maxForce: 0.38,
 
   measure(e, tc) {
     if (e.pointerType === 'mouse') {
       const isWide = e.shiftKey || e.button === 2;
-      const sharpness = isWide
-        ? 0.07 + Math.random() * 0.14
-        : 0.72 + Math.random() * 0.24;
       return {
-        sharpness,
+        sharpness: isWide ? (0.06 + Math.random() * 0.12) : (0.78 + Math.random() * 0.18),
         debug: isWide ? 'mouse:wide' : 'mouse:sharp'
       };
     }
 
-    const peW = e.width || 0;
-    const peH = e.height || 0;
-    const peArea = peW * peH;
-
     const rx = tc ? tc.rx : 0;
     const ry = tc ? tc.ry : 0;
-    const tcArea = Math.PI * rx * ry; // True ellipse area from TouchEvent
+    const tcArea = Math.PI * rx * ry;
+    const peArea = (e.width || 0) * (e.height || 0);
+    const activeArea = tcArea > 4 ? tcArea : peArea;
     const force = tc && tc.force > 0 ? tc.force : (e.pressure > 0 ? e.pressure : 0);
 
-    // Pick whichever geometric contact sensor gives larger real reading
-    const activeArea = tcArea > 4 ? tcArea : peArea;
-
-    if (activeArea > 4) {
+    if (activeArea > 10) {
       if (activeArea < this.minArea) this.minArea = activeArea;
       if (activeArea > this.maxArea) this.maxArea = activeArea;
     }
-    if (force > 0) {
+    if (force > 0.005) {
       if (force < this.minForce) this.minForce = force;
       if (force > this.maxForce) this.maxForce = force;
     }
 
-    let areaWide = null;
-    if (this.maxArea - this.minArea > 18) {
-      const lMin = Math.log(Math.max(4, this.minArea));
-      const lMax = Math.log(Math.max(8, this.maxArea));
-      const lVal = Math.log(Math.max(4, activeArea));
-      areaWide = Math.max(0, Math.min(1, (lVal - lMin) / (lMax - lMin)));
+    const lMin = Math.log(Math.max(40, this.minArea));
+    const lMax = Math.log(Math.max(this.minArea + 120, this.maxArea));
+    const lVal = Math.log(Math.max(40, activeArea));
+    const areaWide = Math.max(0, Math.min(1, (lVal - lMin) / Math.max(0.2, lMax - lMin)));
+
+    let wideScore = areaWide;
+    const fSpan = this.maxForce - this.minForce;
+    if (fSpan > 0.05 && force > 0) {
+      const forceWide = Math.max(0, Math.min(1, (force - this.minForce) / fSpan));
+      wideScore = areaWide * 0.62 + forceWide * 0.38;
     }
 
-    let forceWide = null;
-    if (this.maxForce - this.minForce > 0.06) {
-      forceWide = Math.max(0, Math.min(1, (force - this.minForce) / (this.maxForce - this.minForce)));
-    }
-
-    let wideScore = 0.35; // neutral default if sensor reports static constant
-    if (areaWide !== null && forceWide !== null) {
-      wideScore = areaWide * 0.65 + forceWide * 0.35;
-    } else if (areaWide !== null) {
-      wideScore = areaWide;
-    } else if (forceWide !== null) {
-      wideScore = forceWide;
-    }
-
-    const sharpness = Math.max(0.05, Math.min(0.98, 1.0 - wideScore));
-    const debug = `pe:${peW.toFixed(0)}x${peH.toFixed(0)} tc:${rx.toFixed(1)}x${ry.toFixed(1)} f:${force.toFixed(2)}`;
+    const sharpness = Math.max(0.04, Math.min(0.98, 1.0 - wideScore));
+    const debug = `tc:${rx.toFixed(0)}x${ry.toFixed(0)} f:${force.toFixed(2)}`;
     return { sharpness, debug };
+  }
+};
+
+/**
+ * M-3: Dynamic Water Agitation Memory (Still Pool <-> Choppy Turbulent Surface)
+ */
+const waterMemory = {
+  agitation: 0,
+  lastTime: performance.now(),
+  recentTaps: [], // { nx, ny, time }
+
+  registerTap(nx, ny, sharpness) {
+    const now = performance.now();
+    const dtSec = Math.max(0, (now - this.lastTime) / 1000);
+    this.lastTime = now;
+
+    // Exponential calming back toward mirror-still water (~2.3s relaxation)
+    this.agitation *= Math.exp(-dtSec / 2.3);
+
+    // Prune taps older than 3 seconds
+    this.recentTaps = this.recentTaps.filter((t) => now - t.time < 3000);
+
+    // Tapping near recent ripples stirs up higher local agitation
+    let proximityBoost = 0;
+    for (const t of this.recentTaps) {
+      const d = Math.hypot(t.nx - nx, t.ny - ny);
+      if (d < 0.35) {
+        proximityBoost += (1.0 - d / 0.35) * 0.14;
+      }
+    }
+
+    const wide = 1.0 - sharpness;
+    this.agitation = Math.min(
+      1.0,
+      this.agitation + 0.14 + wide * 0.22 + Math.min(0.28, proximityBoost)
+    );
+    this.recentTaps.push({ nx, ny, time: now });
+    return this.agitation;
   }
 };
 
 const ARCH_NAMES = ['', 'clean plop', 'doublet', 'skimmer', 'submerged', 'effervescence'];
 let lastArch = 0;
 
-function pickArchetype(sharpness) {
+function pickArchetype(sharpness, agitation) {
+  const wide = 1.0 - sharpness;
   const weights = [
-    0.22 + sharpness * 0.16,
-    0.22 + (1 - Math.abs(sharpness - 0.5)) * 0.12,
-    0.10 + sharpness * 0.28,
-    0.08 + (1 - sharpness) * 0.34,
-    0.14 + sharpness * 0.14
+    0.20 + sharpness * 0.16 + (1 - agitation) * 0.16, // 1: clean plop (more in calm water)
+    0.22 + (1 - Math.abs(sharpness - 0.5)) * 0.14,    // 2: coupled doublet
+    0.08 + sharpness * 0.22 + agitation * 0.22,       // 3: surface skimmer (choppy/sharp)
+    0.06 + wide * 0.40 + (1 - agitation) * 0.10,      // 4: submerged pocket (wide thumb)
+    0.10 + sharpness * 0.12 + agitation * 0.26        // 5: micro-effervescence (agitated)
   ];
 
   if (lastArch >= 1 && lastArch <= 5) {
@@ -185,7 +209,7 @@ function pickArchetype(sharpness) {
 async function fetchOrcModules(sampleRate) {
   return Promise.all(
     ORC_MODULES.map(async (path) => {
-      const res = await fetch(`./${path}?v=8`, { cache: 'no-store' });
+      const res = await fetch(`./${path}?v=9`, { cache: 'no-store' });
       if (!res.ok) throw new Error(`Failed loading ${path} (${res.status})`);
       let code = await res.text();
       if (path === 'dsp/core/00_header.orc') {
@@ -314,27 +338,29 @@ function triggerDroplet(e) {
 
   const tc = e.pointerType !== 'mouse' ? matchTouchMeta(e.clientX, e.clientY) : null;
   const { sharpness, debug } = touchCal.measure(e, tc);
-  const arch = pickArchetype(sharpness);
+  const agitation = waterMemory.registerTap(nx, ny, sharpness);
+  const arch = pickArchetype(sharpness, agitation);
 
   const wideFactor = 1.0 - sharpness;
   const amp = Math.max(
     0.34,
-    Math.min(0.95, 0.46 + wideFactor * 0.36 + (Math.random() - 0.5) * 0.14)
+    Math.min(0.95, 0.44 + wideFactor * 0.40 + (Math.random() - 0.5) * 0.12)
   );
 
   const minFreq = 185;
-  const maxFreq = 1480;
-  const pitchNorm = Math.max(0, Math.min(1, (1.0 - ny) + (sharpness - 0.5) * 0.12));
+  const maxFreq = 1380;
+  const pitchNorm = Math.max(0, Math.min(1, 1.0 - ny));
   const baseFreq = minFreq * Math.pow(maxFreq / minFreq, pitchNorm);
 
   const richness = nx;
   const pan = 0.15 + nx * 0.70;
 
-  const dur = 1.7;
-  const msg = `i 10 0 ${dur.toFixed(3)} ${baseFreq.toFixed(2)} ${amp.toFixed(3)} ${pan.toFixed(3)} ${sharpness.toFixed(3)} ${richness.toFixed(3)} ${arch}`;
+  // p9 = arch, p10 = agitation (M-3)
+  const dur = 1.75;
+  const msg = `i 10 0 ${dur.toFixed(3)} ${baseFreq.toFixed(2)} ${amp.toFixed(3)} ${pan.toFixed(3)} ${sharpness.toFixed(3)} ${richness.toFixed(3)} ${arch} ${agitation.toFixed(3)}`;
   csound.inputMessage(msg);
 
-  showTelemetry(`sharp ${Math.round(sharpness * 100)}% · ${debug} · ${ARCH_NAMES[arch]}`);
+  showTelemetry(`sharp ${Math.round(sharpness * 100)}% · chop ${Math.round(agitation * 100)}% · ${debug} · ${ARCH_NAMES[arch]}`);
 }
 
 surface.addEventListener('contextmenu', (e) => e.preventDefault());

@@ -1,5 +1,5 @@
 ; ============================================================================
-; CrownSheetSpray UDO (Ligament Breakup & Aerated Crown Splatter Physics)
+; CrownSheetSpray UDO (Audible Wet Crown Splatter & Fluid Slosh Physics)
 ; ============================================================================
 opcode CrownSheetSpray, a, iiii
   iAmp, iSplashEnergy, iBaseFreq, iDur xin
@@ -7,43 +7,43 @@ opcode CrownSheetSpray, a, iiii
   iDurSafe   = (iDur > 0.08 ? iDur : 0.08)
   iEnergy    limit iSplashEnergy, 0.0, 1.0
 
-  ; Spray lifetime scales with splash energy (35ms..155ms)
-  iSprayDur  = 0.035 + iEnergy * 0.120
+  ; Spray lifetime scales strongly with splash energy (45ms..210ms)
+  iSprayDur  = 0.045 + iEnergy * 0.165
   iSprayDur  = (iSprayDur < iDurSafe - 0.01 ? iSprayDur : iDurSafe - 0.01)
   iRem       = (iDurSafe - iSprayDur > 0.01 ? iDurSafe - iSprayDur : 0.01)
 
-  ; 1) Micro-ligament breakup impulses (dust2 density decaying exponentially)
-  iDensStart = 280 + iEnergy * 950
-  kDens      expseg iDensStart, iSprayDur, 12.0, iRem, 12.0
+  ; 1) Micro-ligament breakup impulses (dense liquid splatter)
+  iDensStart = 320 + iEnergy * 1350
+  kDens      expseg iDensStart, iSprayDur, 16.0, iRem, 16.0
   aDust      dust2 1.0, kDens
 
   aEnvDust   expseg 0.001, 0.003, 1.0, iSprayDur, 0.0002, iRem, 0.0002
   aDustExc   = aDust * aEnvDust
 
-  iBaseSafe  limit iBaseFreq, 180, 1500
-  iMul1      random 2.2, 2.7
-  iMul2      random 3.8, 4.7
-  iModeF1    limit iBaseSafe * iMul1, 900, 4200
-  iModeF2    limit iBaseSafe * iMul2, 1800, 6800
+  iBaseSafe  limit iBaseFreq, 130, 1400
+  iMul1      random 2.0, 2.6
+  iMul2      random 3.4, 4.4
+  iModeF1    limit iBaseSafe * iMul1, 750, 3800
+  iModeF2    limit iBaseSafe * iMul2, 1500, 6200
 
-  aSprayM1   mode aDustExc, iModeF1, 7.5
-  aSprayM2   mode aDustExc, iModeF2, 10.5
-  aLigaments = aSprayM1 * 0.62 + aSprayM2 * 0.38
+  aSprayM1   mode aDustExc, iModeF1, 7.2
+  aSprayM2   mode aDustExc, iModeF2, 9.8
+  aLigaments = aSprayM1 * 0.64 + aSprayM2 * 0.36
 
-  ; 2) Aerated crown sheet turbulence sweeping down as sheet relaxes
+  ; 2) Wet crown-sheet fluid slosh sweeping down as displaced wave collapses
   aAir       noise 1.0, 0.0
-  iStartCf   limit 1800 + iEnergy * 2400, 1200, 5200
-  iEndCf     limit 620 + iEnergy * 480, 450, 1800
+  iStartCf   limit 1350 + iEnergy * 2100, 900, 4400
+  iEndCf     limit 320 + iEnergy * 340, 280, 1100
   kSweep     expseg iStartCf, iSprayDur, iEndCf, iRem, iEndCf
-  aAirBand   butbp aAir, kSweep, kSweep * 0.55
+  aAirBand   butbp aAir, kSweep, kSweep * 0.48
 
-  aEnvAir    expseg 0.0005, 0.005, 1.0, iSprayDur * 0.85, 0.0002, iRem, 0.0002
-  aAirTurbul = aAirBand * aEnvAir * 0.22
+  aEnvAir    expseg 0.0005, 0.006, 1.0, iSprayDur * 0.90, 0.0002, iRem, 0.0002
+  aSlosh     = aAirBand * aEnvAir * 0.34
 
-  ; Nonlinear energy curve keeps feather-light sharp taps spray-free
-  iScale     = pow(iEnergy, 1.45) * iAmp * 0.34
-  aMix       = (aLigaments * 0.82 + aAirTurbul * 0.48) * iScale
-  aOut       buthp aMix, 280
+  ; Bold presence on wide splashes while staying clean
+  iScale     = pow(iEnergy, 1.22) * iAmp * 0.85
+  aMix       = (aLigaments * 0.88 + aSlosh * 0.65) * iScale
+  aOut       buthp aMix, 220
 
   xout aOut
 endop
