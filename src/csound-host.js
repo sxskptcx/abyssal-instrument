@@ -1,7 +1,167 @@
+// import { Csound } from 'https://cdn.jsdelivr.net/npm/@csound/browser@7.0.0/dist/csound.js';
+
+// const surface = document.getElementById('touchSurface');
+// const statusEl = document.getElementById('status');
+
+// const ORC_MODULES = [
+//   'dsp/core/00_header.orc',
+//   'dsp/core/01_busses.orc',
+//   'dsp/physics/10_surface_radiation.orc',
+//   'dsp/physics/11_impact_cavity.orc',
+//   'dsp/physics/12_minnaert_bubble.orc',
+//   'dsp/space/20_open_night_lake.orc',
+//   'dsp/quadrants/glass_droplets/30_option_a_tap.orc',
+//   'dsp/core/99_master_bus.orc'
+// ];
+
+// let csound = null;
+// let audioCtx = null;
+// let isBooting = false;
+// let isReady = false;
+
+// function setStatus(text, hideAfterMs = 0) {
+//   statusEl.textContent = text;
+//   statusEl.classList.remove('hidden');
+//   if (hideAfterMs > 0) {
+//     clearTimeout(setStatus._t);
+//     setStatus._t = setTimeout(() => statusEl.classList.add('hidden'), hideAfterMs);
+//   }
+// }
+
+// async function fetchOrcModules(sampleRate) {
+//   return Promise.all(
+//     ORC_MODULES.map(async (path) => {
+//       const res = await fetch(`./${path}?v=4`, { cache: 'no-store' });
+//       if (!res.ok) throw new Error(`Failed loading ${path} (${res.status})`);
+//       let code = await res.text();
+//       if (path === 'dsp/core/00_header.orc') {
+//         code = code.replace('__SAMPLE_RATE__', String(sampleRate));
+//       }
+//       return { path, code };
+//     })
+//   );
+// }
+
+// async function bootCsound() {
+//   if (isReady || isBooting) return isReady;
+//   isBooting = true;
+//   setStatus('Initializing Csound 7 WASM...');
+
+//   const csoundLogs = [];
+
+//   try {
+//     const AudioCtx = window.AudioContext || window.webkitAudioContext;
+//     audioCtx = new AudioCtx({ latencyHint: 'interactive' });
+//     if (audioCtx.state === 'suspended') {
+//       await audioCtx.resume();
+//     }
+
+//     csound = await Csound({ audioContext: audioCtx });
+
+//     csound.on('message', (msg) => {
+//       console.log('[csound]', msg);
+//       if (typeof msg === 'string' && msg.trim().length > 0) {
+//         csoundLogs.push(msg.trim());
+//         if (csoundLogs.length > 24) csoundLogs.shift();
+//       }
+//     });
+
+//     await csound.setOption('-odac');
+
+//     const modules = await fetchOrcModules(audioCtx.sampleRate);
+//     const fullOrc = modules.map((m) => `; === ${m.path} ===\n${m.code}`).join('\n\n');
+
+//     const compileCode = await csound.compileOrc(fullOrc);
+//     if (compileCode !== 0) {
+//       // Probe sequentially to pinpoint exact failing module if needed
+//       let failedModule = 'unknown';
+//       let accum = '';
+//       for (const m of modules) {
+//         accum += `\n${m.code}`;
+//         const probeCs = await Csound({ audioContext: audioCtx });
+//         const pLogs = [];
+//         probeCs.on('message', (msg) => pLogs.push(String(msg).trim()));
+//         await probeCs.setOption('-odac');
+//         const res = await probeCs.compileOrc(accum);
+//         if (res !== 0) {
+//           failedModule = `${m.path} -> ${pLogs.slice(-3).join(' | ')}`;
+//           break;
+//         }
+//       }
+//       throw new Error(`compileOrc(${compileCode}) in ${failedModule}\nLogs: ${csoundLogs.slice(-4).join(' | ')}`);
+//     }
+
+//     const startCode = await csound.start();
+//     if (startCode !== 0) {
+//       throw new Error(`Csound start returned ${startCode}`);
+//     }
+
+//     await csound.inputMessage('i 900 0 -1');
+//     await csound.inputMessage('i 999 0 -1');
+
+//     isReady = true;
+//     isBooting = false;
+//     setStatus('READY', 1100);
+//     return true;
+//   } catch (err) {
+//     isBooting = false;
+//     console.error(err);
+//     setStatus(`Audio error:\n${err.message}`);
+//     return false;
+//   }
+// }
+
+// function triggerDroplet(e) {
+//   if (!isReady || !csound) return;
+
+//   const rect = surface.getBoundingClientRect();
+//   const nx = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+//   const ny = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+
+//   const area = (e.width || 16) * (e.height || 16);
+//   let sharpness = 1.0 - Math.max(0, Math.min(1, (area - 140) / 1400));
+//   if (e.pointerType === 'mouse') {
+//     sharpness = 0.65 + (Math.random() - 0.5) * 0.35;
+//   } else {
+//     sharpness = Math.max(0.08, Math.min(0.98, sharpness + (Math.random() - 0.5) * 0.16));
+//   }
+
+//   const pressure = e.pressure && e.pressure > 0 ? e.pressure : 0.5;
+//   const amp = Math.max(0.28, Math.min(0.95, 0.42 + pressure * 0.42 + (Math.random() - 0.5) * 0.14));
+
+//   const minFreq = 190;
+//   const maxFreq = 1480;
+//   const pitchNorm = 1.0 - ny;
+//   const baseFreq = minFreq * Math.pow(maxFreq / minFreq, pitchNorm);
+
+//   const richness = nx;
+//   const pan = 0.15 + nx * 0.70;
+
+//   const dur = 1.6;
+//   const msg = `i 10 0 ${dur.toFixed(3)} ${baseFreq.toFixed(2)} ${amp.toFixed(3)} ${pan.toFixed(3)} ${sharpness.toFixed(3)} ${richness.toFixed(3)}`;
+//   csound.inputMessage(msg);
+// }
+
+// surface.addEventListener('contextmenu', (e) => e.preventDefault());
+
+// surface.addEventListener('pointerdown', async (e) => {
+//   e.preventDefault();
+//   if (!isReady) {
+//     const ok = await bootCsound();
+//     if (!ok) return;
+//   } else if (audioCtx && audioCtx.state === 'suspended') {
+//     await audioCtx.resume();
+//   }
+//   triggerDroplet(e);
+// });
+
 import { Csound } from 'https://cdn.jsdelivr.net/npm/@csound/browser@7.0.0/dist/csound.js';
 
 const surface = document.getElementById('touchSurface');
 const statusEl = document.getElementById('status');
+
+// Prevent Android Chrome/Samsung Internet from treating touches as scrolls
+surface.style.touchAction = 'none';
 
 const ORC_MODULES = [
   'dsp/core/00_header.orc',
@@ -28,6 +188,27 @@ function setStatus(text, hideAfterMs = 0) {
   }
 }
 
+function ensureAudioContext() {
+  if (!audioCtx) {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    audioCtx = new AudioCtx();
+  }
+  if (audioCtx.state === 'suspended') {
+    // Do NOT await here — on Android, pointerdown alone won't resolve resume() until pointerup
+    audioCtx.resume().catch(() => {});
+  }
+  return audioCtx;
+}
+
+// Unlock AudioContext on pointerup/touchend/click (recognized as valid user activation on Android)
+['pointerup', 'touchend', 'click'].forEach((evt) => {
+  window.addEventListener(evt, () => {
+    if (audioCtx && audioCtx.state === 'suspended') {
+      audioCtx.resume().catch(() => {});
+    }
+  }, { passive: true });
+});
+
 async function fetchOrcModules(sampleRate) {
   return Promise.all(
     ORC_MODULES.map(async (path) => {
@@ -45,18 +226,18 @@ async function fetchOrcModules(sampleRate) {
 async function bootCsound() {
   if (isReady || isBooting) return isReady;
   isBooting = true;
-  setStatus('Initializing Csound 7 WASM...');
 
   const csoundLogs = [];
 
   try {
-    const AudioCtx = window.AudioContext || window.webkitAudioContext;
-    audioCtx = new AudioCtx({ latencyHint: 'interactive' });
-    if (audioCtx.state === 'suspended') {
-      await audioCtx.resume();
-    }
+    setStatus('1/4 Creating AudioContext...');
+    const ctx = ensureAudioContext();
 
-    csound = await Csound({ audioContext: audioCtx });
+    setStatus('2/4 Loading Csound 7 WASM...');
+    csound = await Csound({
+      audioContext: ctx,
+      useWorker: false
+    });
 
     csound.on('message', (msg) => {
       console.log('[csound]', msg);
@@ -68,17 +249,17 @@ async function bootCsound() {
 
     await csound.setOption('-odac');
 
-    const modules = await fetchOrcModules(audioCtx.sampleRate);
+    setStatus('3/4 Compiling DSP modules...');
+    const modules = await fetchOrcModules(ctx.sampleRate);
     const fullOrc = modules.map((m) => `; === ${m.path} ===\n${m.code}`).join('\n\n');
 
     const compileCode = await csound.compileOrc(fullOrc);
     if (compileCode !== 0) {
-      // Probe sequentially to pinpoint exact failing module if needed
       let failedModule = 'unknown';
       let accum = '';
       for (const m of modules) {
         accum += `\n${m.code}`;
-        const probeCs = await Csound({ audioContext: audioCtx });
+        const probeCs = await Csound({ audioContext: ctx, useWorker: false });
         const pLogs = [];
         probeCs.on('message', (msg) => pLogs.push(String(msg).trim()));
         await probeCs.setOption('-odac');
@@ -91,6 +272,7 @@ async function bootCsound() {
       throw new Error(`compileOrc(${compileCode}) in ${failedModule}\nLogs: ${csoundLogs.slice(-4).join(' | ')}`);
     }
 
+    setStatus('4/4 Starting engine...');
     const startCode = await csound.start();
     if (startCode !== 0) {
       throw new Error(`Csound start returned ${startCode}`);
@@ -98,6 +280,10 @@ async function bootCsound() {
 
     await csound.inputMessage('i 900 0 -1');
     await csound.inputMessage('i 999 0 -1');
+
+    if (ctx.state === 'suspended') {
+      await ctx.resume();
+    }
 
     isReady = true;
     isBooting = false;
@@ -143,14 +329,15 @@ function triggerDroplet(e) {
 }
 
 surface.addEventListener('contextmenu', (e) => e.preventDefault());
+surface.addEventListener('touchstart', (e) => e.preventDefault(), { passive: false });
 
 surface.addEventListener('pointerdown', async (e) => {
   e.preventDefault();
+  ensureAudioContext();
+
   if (!isReady) {
     const ok = await bootCsound();
     if (!ok) return;
-  } else if (audioCtx && audioCtx.state === 'suspended') {
-    await audioCtx.resume();
   }
   triggerDroplet(e);
 });
