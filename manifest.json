@@ -1,0 +1,10 @@
+{
+  "name": "ABYSSAL — Water Light Instrument",
+  "short_name": "ABYSSAL",
+  "description": "Minimalist multi-touch water-light synthesizer instrument.",
+  "start_url": "./index.html",
+  "display": "fullscreen",
+  "orientation": "any",
+  "background_color": "#000000",
+  "theme_color": "#000000"
+}
