@@ -31,7 +31,7 @@ function setStatus(text, hideAfterMs = 0) {
 async function fetchOrcModules(sampleRate) {
   return Promise.all(
     ORC_MODULES.map(async (path) => {
-      const res = await fetch(`./${path}`, { cache: 'no-store' });
+      const res = await fetch(`./${path}?v=4`, { cache: 'no-store' });
       if (!res.ok) throw new Error(`Failed loading ${path} (${res.status})`);
       let code = await res.text();
       if (path === 'dsp/core/00_header.orc') {
@@ -45,7 +45,7 @@ async function fetchOrcModules(sampleRate) {
 async function bootCsound() {
   if (isReady || isBooting) return isReady;
   isBooting = true;
-  setStatus('initializing csound 7 wasm...');
+  setStatus('Initializing Csound 7 WASM...');
 
   const csoundLogs = [];
 
@@ -56,36 +56,39 @@ async function bootCsound() {
       await audioCtx.resume();
     }
 
-    csound = await Csound({
-      audioContext: audioCtx,
-      inputChannelCount: 0,
-      outputChannelCount: 2,
-      autoConnect: true
-    });
+    csound = await Csound({ audioContext: audioCtx });
 
     csound.on('message', (msg) => {
       console.log('[csound]', msg);
       if (typeof msg === 'string' && msg.trim().length > 0) {
         csoundLogs.push(msg.trim());
-        if (csoundLogs.length > 16) csoundLogs.shift();
+        if (csoundLogs.length > 24) csoundLogs.shift();
       }
     });
 
     await csound.setOption('-odac');
-    await csound.setOption('--sample-accurate');
 
     const modules = await fetchOrcModules(audioCtx.sampleRate);
-    const encoder = new TextEncoder();
-
-    for (const m of modules) {
-      await csound.fs.writeFile(`/${m.path}`, encoder.encode(m.code));
-    }
-
     const fullOrc = modules.map((m) => `; === ${m.path} ===\n${m.code}`).join('\n\n');
+
     const compileCode = await csound.compileOrc(fullOrc);
     if (compileCode !== 0) {
-      const errLine = csoundLogs.find((l) => /error|syntax|unexpected/i.test(l)) || csoundLogs.slice(-2).join(' | ');
-      throw new Error(`compileOrc(${compileCode}): ${errLine || 'check console'}`);
+      // Probe sequentially to pinpoint exact failing module if needed
+      let failedModule = 'unknown';
+      let accum = '';
+      for (const m of modules) {
+        accum += `\n${m.code}`;
+        const probeCs = await Csound({ audioContext: audioCtx });
+        const pLogs = [];
+        probeCs.on('message', (msg) => pLogs.push(String(msg).trim()));
+        await probeCs.setOption('-odac');
+        const res = await probeCs.compileOrc(accum);
+        if (res !== 0) {
+          failedModule = `${m.path} -> ${pLogs.slice(-3).join(' | ')}`;
+          break;
+        }
+      }
+      throw new Error(`compileOrc(${compileCode}) in ${failedModule}\nLogs: ${csoundLogs.slice(-4).join(' | ')}`);
     }
 
     const startCode = await csound.start();
@@ -98,12 +101,12 @@ async function bootCsound() {
 
     isReady = true;
     isBooting = false;
-    setStatus('ready', 1200);
+    setStatus('READY', 1100);
     return true;
   } catch (err) {
     isBooting = false;
     console.error(err);
-    setStatus(`audio error: ${err.message}`);
+    setStatus(`Audio error:\n${err.message}`);
     return false;
   }
 }

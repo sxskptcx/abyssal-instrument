@@ -27,7 +27,7 @@ opcode MinnaertBubble, a, iiiii
 
   aChirpRatio = aChirp / iXiSafe
   aChirpPos   limit aChirpRatio, 0.0, 4.0
-  aChirpCurve = iXiMax * (1.0 - exp(-aChirpPos * 2.8))
+  aChirpCurve = iXiMax * (1.0 - exp(aChirpPos * -2.8))
 
   ; Micro fluid jitter prevents sterile oscillator lock
   kMicroJit  jitter 0.006, 18, 55

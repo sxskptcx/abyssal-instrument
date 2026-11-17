@@ -20,7 +20,7 @@
       height: 100%;
       overflow: hidden;
       background: #000000;
-      color: rgba(200, 215, 230, 0.45);
+      color: rgba(200, 215, 230, 0.55);
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     }
 
@@ -42,11 +42,11 @@
       justify-content: center;
       pointer-events: none;
       font-size: 12px;
-      letter-spacing: 0.3em;
-      text-transform: uppercase;
+      letter-spacing: 0.16em;
       transition: opacity 0.9s ease;
       text-align: center;
       padding: 24px;
+      white-space: pre-wrap;
     }
 
     #status.hidden {
@@ -56,8 +56,8 @@
 </head>
 <body>
   <div id="touchSurface"></div>
-  <div id="status">touch to load csound acoustic engine</div>
+  <div id="status">TOUCH TO LOAD CSOUND ACOUSTIC ENGINE</div>
 
-  <script type="module" src="./src/csound-host.js"></script>
+  <script type="module" src="./src/csound-host.js?v=4"></script>
 </body>
 </html>

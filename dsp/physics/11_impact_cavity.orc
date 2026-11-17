@@ -20,12 +20,13 @@ opcode ImpactCavity2C, a, iiii
   aSnapMix  = aSnapM1 * 0.65 + aSnapM2 * 0.35
   aSnapRaw  buthp aSnapMix, 950
 
-  ; 2) Viscous Fluid Displacement Cavity Thud (14-30ms low-Q cavity mode)
+  ; 2) Viscous Fluid Displacement Cavity Thud (core noise -> 1st-order brown tone)
   iThudDur  random 0.015, 0.028
   iThudRem  = (iDurSafe - iThudDur > 0.005 ? iDurSafe - iThudDur : 0.005)
   aThudEnv  expseg 1.0, iThudDur, 0.0001, iThudRem, 0.0001
-  aBrown    fractalnoise 1.0, 1.75
-  aThudExc  = aBrown * aThudEnv
+  aWhiteB   noise 1.0, 0.0
+  aBrown    tone aWhiteB, 140
+  aThudExc  = (aBrown * 3.8) * aThudEnv
 
   iBaseSafe = (iBaseFreq > 150 ? iBaseFreq : 150)
   iCavJit   random 0.88, 1.12
