@@ -23,6 +23,9 @@ let isBooting = false;
 let isReady = false;
 let needsTapUnmute = false;
 
+// Stores raw TouchEvent sensor data from touchstart (fires right before pointerdown)
+const rawTouchQueue = [];
+
 function setStatus(text, hideAfterMs = 0) {
   statusEl.textContent = text;
   statusEl.classList.remove('hidden');
@@ -36,7 +39,7 @@ function showTelemetry(text) {
   telemetryEl.textContent = text;
   telemetryEl.classList.add('show');
   clearTimeout(showTelemetry._t);
-  showTelemetry._t = setTimeout(() => telemetryEl.classList.remove('show'), 1800);
+  showTelemetry._t = setTimeout(() => telemetryEl.classList.remove('show'), 2500);
 }
 
 function withTimeout(promise, ms, label) {
@@ -62,84 +65,105 @@ function primeAndroidAudio(ctx) {
   } catch (_) {}
 }
 
-/**
- * I-1: Self-Calibrating Touch Sensor
- * Learns this specific device's smallest fingertip vs. widest thumb footprint.
- */
-const touchCal = {
-  minArea: 220,
-  maxArea: 620,
-  minPressure: 1.0,
-  maxPressure: 0.0,
-  samples: 0,
+function matchTouchMeta(clientX, clientY) {
+  const now = performance.now();
+  while (rawTouchQueue.length && now - rawTouchQueue[0].ts > 150) {
+    rawTouchQueue.shift();
+  }
+  let bestIdx = -1;
+  let bestDist = 48;
+  for (let i = 0; i < rawTouchQueue.length; i++) {
+    const d = Math.hypot(rawTouchQueue[i].x - clientX, rawTouchQueue[i].y - clientY);
+    if (d < bestDist) {
+      bestDist = d;
+      bestIdx = i;
+    }
+  }
+  if (bestIdx >= 0) {
+    return rawTouchQueue.splice(bestIdx, 1)[0];
+  }
+  return null;
+}
 
-  measure(e) {
+const touchCal = {
+  minArea: Infinity,
+  maxArea: 0,
+  minForce: Infinity,
+  maxForce: 0,
+
+  measure(e, tc) {
     if (e.pointerType === 'mouse') {
       const isWide = e.shiftKey || e.button === 2;
       const sharpness = isWide
         ? 0.07 + Math.random() * 0.14
         : 0.72 + Math.random() * 0.24;
-      return { sharpness, area: isWide ? 900 : 180 };
+      return {
+        sharpness,
+        debug: isWide ? 'mouse:wide' : 'mouse:sharp'
+      };
     }
 
-    const w = e.width && e.width > 0 ? e.width : 18;
-    const h = e.height && e.height > 0 ? e.height : 18;
-    const area = Math.max(25, w * h);
-    const p = e.pressure && e.pressure > 0 ? e.pressure : 0.5;
+    const peW = e.width || 0;
+    const peH = e.height || 0;
+    const peArea = peW * peH;
 
-    this.samples++;
-    // Gently pull bounds back inward slightly over time so one palm brush self-heals
-    if (this.samples > 4) {
-      this.minArea += 1.5;
-      this.maxArea -= 2.5;
-      if (this.maxArea - this.minArea < 160) {
-        this.maxArea = this.minArea + 160;
-      }
+    const rx = tc ? tc.rx : 0;
+    const ry = tc ? tc.ry : 0;
+    const tcArea = Math.PI * rx * ry; // True ellipse area from TouchEvent
+    const force = tc && tc.force > 0 ? tc.force : (e.pressure > 0 ? e.pressure : 0);
+
+    // Pick whichever geometric contact sensor gives larger real reading
+    const activeArea = tcArea > 4 ? tcArea : peArea;
+
+    if (activeArea > 4) {
+      if (activeArea < this.minArea) this.minArea = activeArea;
+      if (activeArea > this.maxArea) this.maxArea = activeArea;
+    }
+    if (force > 0) {
+      if (force < this.minForce) this.minForce = force;
+      if (force > this.maxForce) this.maxForce = force;
     }
 
-    if (area < this.minArea) this.minArea = area;
-    if (area > this.maxArea) this.maxArea = area;
-    if (p < this.minPressure) this.minPressure = p;
-    if (p > this.maxPressure) this.maxPressure = p;
+    let areaWide = null;
+    if (this.maxArea - this.minArea > 18) {
+      const lMin = Math.log(Math.max(4, this.minArea));
+      const lMax = Math.log(Math.max(8, this.maxArea));
+      const lVal = Math.log(Math.max(4, activeArea));
+      areaWide = Math.max(0, Math.min(1, (lVal - lMin) / (lMax - lMin)));
+    }
 
-    // Log-area scaling reflects human capacitive contact radius perceptually
-    const logMin = Math.log(Math.max(25, this.minArea));
-    const logMax = Math.log(Math.max(this.minArea + 120, this.maxArea));
-    const logArea = Math.log(area);
-    let areaNorm = (logArea - logMin) / Math.max(0.25, logMax - logMin);
-    areaNorm = Math.max(0, Math.min(1, areaNorm));
+    let forceWide = null;
+    if (this.maxForce - this.minForce > 0.06) {
+      forceWide = Math.max(0, Math.min(1, (force - this.minForce) / (this.maxForce - this.minForce)));
+    }
 
-    // Only incorporate pressure if device actually reports varying pressure
-    let wideScore = areaNorm;
-    const pSpan = this.maxPressure - this.minPressure;
-    if (pSpan > 0.08) {
-      const pNorm = Math.max(0, Math.min(1, (p - this.minPressure) / pSpan));
-      wideScore = areaNorm * 0.70 + pNorm * 0.30;
+    let wideScore = 0.35; // neutral default if sensor reports static constant
+    if (areaWide !== null && forceWide !== null) {
+      wideScore = areaWide * 0.65 + forceWide * 0.35;
+    } else if (areaWide !== null) {
+      wideScore = areaWide;
+    } else if (forceWide !== null) {
+      wideScore = forceWide;
     }
 
     const sharpness = Math.max(0.05, Math.min(0.98, 1.0 - wideScore));
-    return { sharpness, area: Math.round(area) };
+    const debug = `pe:${peW.toFixed(0)}x${peH.toFixed(0)} tc:${rx.toFixed(1)}x${ry.toFixed(1)} f:${force.toFixed(2)}`;
+    return { sharpness, debug };
   }
 };
 
-/**
- * V-1: 5 Natural Fluid Drop Archetypes weighted by sharpness & anti-repeat memory
- * 1: clean_plop, 2: doublet, 3: skimmer, 4: submerged, 5: effervescence
- */
 const ARCH_NAMES = ['', 'clean plop', 'doublet', 'skimmer', 'submerged', 'effervescence'];
 let lastArch = 0;
 
 function pickArchetype(sharpness) {
-  // Base weights for [clean_plop, doublet, skimmer, submerged, effervescence]
   const weights = [
-    0.22 + sharpness * 0.16,        // 1: clean plop
-    0.22 + (1 - Math.abs(sharpness - 0.5)) * 0.12, // 2: coupled doublet
-    0.10 + sharpness * 0.28,        // 3: surface skimmer (more common on sharp/light)
-    0.08 + (1 - sharpness) * 0.34,  // 4: submerged hollow pocket (more common on wide/heavy)
-    0.14 + sharpness * 0.14         // 5: micro-effervescence
+    0.22 + sharpness * 0.16,
+    0.22 + (1 - Math.abs(sharpness - 0.5)) * 0.12,
+    0.10 + sharpness * 0.28,
+    0.08 + (1 - sharpness) * 0.34,
+    0.14 + sharpness * 0.14
   ];
 
-  // Reduce immediate repeat probability so consecutive taps feel fresh
   if (lastArch >= 1 && lastArch <= 5) {
     weights[lastArch - 1] *= 0.28;
   }
@@ -161,7 +185,7 @@ function pickArchetype(sharpness) {
 async function fetchOrcModules(sampleRate) {
   return Promise.all(
     ORC_MODULES.map(async (path) => {
-      const res = await fetch(`./${path}?v=7`, { cache: 'no-store' });
+      const res = await fetch(`./${path}?v=8`, { cache: 'no-store' });
       if (!res.ok) throw new Error(`Failed loading ${path} (${res.status})`);
       let code = await res.text();
       if (path === 'dsp/core/00_header.orc') {
@@ -288,17 +312,16 @@ function triggerDroplet(e) {
   const nx = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
   const ny = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
 
-  const { sharpness, area } = touchCal.measure(e);
+  const tc = e.pointerType !== 'mouse' ? matchTouchMeta(e.clientX, e.clientY) : null;
+  const { sharpness, debug } = touchCal.measure(e, tc);
   const arch = pickArchetype(sharpness);
 
-  // Wider presses naturally carry slightly fuller physical displacement energy
   const wideFactor = 1.0 - sharpness;
   const amp = Math.max(
     0.34,
     Math.min(0.95, 0.46 + wideFactor * 0.36 + (Math.random() - 0.5) * 0.14)
   );
 
-  // Sharp tips favor smaller crisp drops; wide thumbs shift slightly deeper
   const minFreq = 185;
   const maxFreq = 1480;
   const pitchNorm = Math.max(0, Math.min(1, (1.0 - ny) + (sharpness - 0.5) * 0.12));
@@ -307,15 +330,30 @@ function triggerDroplet(e) {
   const richness = nx;
   const pan = 0.15 + nx * 0.70;
 
-  // p9 = archetype (1..5)
   const dur = 1.7;
   const msg = `i 10 0 ${dur.toFixed(3)} ${baseFreq.toFixed(2)} ${amp.toFixed(3)} ${pan.toFixed(3)} ${sharpness.toFixed(3)} ${richness.toFixed(3)} ${arch}`;
   csound.inputMessage(msg);
 
-  showTelemetry(`sharp ${Math.round(sharpness * 100)}% · ${area}px² · ${ARCH_NAMES[arch]}`);
+  showTelemetry(`sharp ${Math.round(sharpness * 100)}% · ${debug} · ${ARCH_NAMES[arch]}`);
 }
 
 surface.addEventListener('contextmenu', (e) => e.preventDefault());
+
+surface.addEventListener('touchstart', (e) => {
+  if (!isReady || needsTapUnmute) return;
+  const now = performance.now();
+  for (let i = 0; i < e.changedTouches.length; i++) {
+    const t = e.changedTouches[i];
+    rawTouchQueue.push({
+      x: t.clientX,
+      y: t.clientY,
+      rx: t.radiusX || 0,
+      ry: t.radiusY || 0,
+      force: t.force || 0,
+      ts: now
+    });
+  }
+}, { passive: true });
 
 surface.addEventListener('touchend', () => {
   if (!isReady || needsTapUnmute) bootFromGesture();
