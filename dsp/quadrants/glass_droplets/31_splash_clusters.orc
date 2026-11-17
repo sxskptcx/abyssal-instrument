@@ -1,5 +1,6 @@
 ; ============================================================================
-; Instrument 11: SatelliteBubble (Secondary Splash Drops & Worthington Rebound)
+; Instrument 11: SatelliteBubble (Doublets, Skips, Submerged & Worthington)
+; p10 = iChirpScale (optional, defaults cleanly to 1.0)
 ; ============================================================================
 instr 11
   iFreq          = p4
@@ -8,23 +9,24 @@ instr 11
   iSubmerge      = p7
   iRichness      = p8
   iHasMiniImpact = p9
+  iChirpScale    = (p10 > 0.05 ? p10 : 1.0)
 
   iFreqJit   random 0.94, 1.06
   iDropFreq  limit iFreq * iFreqJit, 140, 4200
   iPinch     random 0.0015, 0.0055
   iResScale  = 0.88 + iRichness * 0.72
 
-  aBubble    MinnaertBubble iDropFreq, iAmp * 0.78, iPinch, iResScale, p3
+  aBubble    MinnaertBubble iDropFreq, iAmp * 0.78, iPinch, iResScale, iChirpScale, p3
 
   aImpact    init 0
   if iHasMiniImpact > 0.5 then
-    aImpact  ImpactCavity2C iAmp * 0.52, 0.82, iDropFreq, p3
+    aImpact  ImpactCavity2C iAmp * 0.54, 0.82, iDropFreq, p3
   endif
 
-  iSubCut    = 5800 - iSubmerge * 3900
+  iSubCut    = 5800 - iSubmerge * 4100
   aBubSub    butlp aBubble, iSubCut
 
-  aWetIn     = aBubSub + aImpact * 0.65
+  aWetIn     = aBubSub + aImpact * 0.68
   aWetCore   WaterSurfaceRadiation aWetIn, 0.15 + iRichness * 0.65 + iSubmerge * 0.25
 
   iBodyHold  = (p3 - 0.026 > 0.01 ? p3 - 0.026 : 0.01)
@@ -46,7 +48,7 @@ instr 11
 endin
 
 ; ============================================================================
-; Instrument 12: CrownSheetSprayEvent (Triggered during heavy crater collapse)
+; Instrument 12: CrownSheetSprayEvent (Triggered during medium/wide splashes)
 ; ============================================================================
 instr 12
   iAmp          = p4

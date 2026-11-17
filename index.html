@@ -52,12 +52,32 @@
     #status.hidden {
       opacity: 0;
     }
+
+    #telemetry {
+      position: fixed;
+      bottom: 14px;
+      left: 50%;
+      transform: translateX(-50%);
+      pointer-events: none;
+      font-size: 10px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: rgba(165, 195, 225, 0.30);
+      opacity: 0;
+      transition: opacity 0.6s ease;
+      white-space: nowrap;
+    }
+
+    #telemetry.show {
+      opacity: 1;
+    }
   </style>
 </head>
 <body>
   <div id="touchSurface"></div>
   <div id="status">TAP TO LOAD CSOUND ACOUSTIC ENGINE</div>
+  <div id="telemetry"></div>
 
-  <script type="module" src="./src/csound-host.js?v=6"></script>
+  <script type="module" src="./src/csound-host.js?v=7"></script>
 </body>
 </html>

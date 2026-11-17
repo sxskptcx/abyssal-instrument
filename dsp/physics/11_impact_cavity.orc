@@ -1,43 +1,47 @@
 ; ============================================================================
-; ImpactCavity2C UDO (Option 2C: Velocity/Contact-Adaptive Surface Impact)
+; ImpactCavity2C UDO (Enhanced Sharp Tip vs. Wide Fluid Displacement Contrast)
 ; ============================================================================
 opcode ImpactCavity2C, a, iiii
   iAmp, iSharpness, iBaseFreq, iDur xin
 
   iDurSafe = (iDur > 0.05 ? iDur : 0.05)
 
-  ; 1) Delicate Capillary Surface Tension Break (2-5ms noise burst -> surface modes)
-  iSnapDur  random 0.0022, 0.0052
+  ; 1) Capillary Surface Tension Snap (crisp delicate click on sharp taps)
+  iSnapDur  random 0.0018, 0.0046
   iSnapRem  = (iDurSafe - iSnapDur > 0.005 ? iDurSafe - iSnapDur : 0.005)
   aSnapEnv  expseg 1.0, iSnapDur, 0.0001, iSnapRem, 0.0001
   aWhite    noise 1.0, 0.0
   aSnapExc  = aWhite * aSnapEnv
 
-  iSnapF1   random 2100, 4200
-  iSnapF2   random 4400, 7200
-  aSnapM1   mode aSnapExc, iSnapF1, 5.5
-  aSnapM2   mode aSnapExc, iSnapF2, 7.5
+  iSnapF1   random 2400, 4600
+  iSnapF2   random 4700, 7600
+  aSnapM1   mode aSnapExc, iSnapF1, 6.0
+  aSnapM2   mode aSnapExc, iSnapF2, 8.0
   aSnapMix  = aSnapM1 * 0.65 + aSnapM2 * 0.35
-  aSnapRaw  buthp aSnapMix, 950
+  aSnapRaw  buthp aSnapMix, 1100
 
-  ; 2) Viscous Fluid Displacement Cavity Thud (core noise -> 1st-order brown tone)
-  iThudDur  random 0.015, 0.028
+  ; 2) Viscous Fluid Displacement Cavity Thud (audible deep warmth on wide presses)
+  iThudDur  random 0.018, 0.036
   iThudRem  = (iDurSafe - iThudDur > 0.005 ? iDurSafe - iThudDur : 0.005)
   aThudEnv  expseg 1.0, iThudDur, 0.0001, iThudRem, 0.0001
   aWhiteB   noise 1.0, 0.0
-  aBrown    tone aWhiteB, 140
-  aThudExc  = (aBrown * 3.8) * aThudEnv
+  aBrown    tone aWhiteB, 175
+  aThudExc  = (aBrown * 4.2) * aThudEnv
 
   iBaseSafe = (iBaseFreq > 150 ? iBaseFreq : 150)
   iCavJit   random 0.88, 1.12
-  iCavRaw   = (48 + (1800 / iBaseSafe) * 9.0) * iCavJit
-  iCavFreq  limit iCavRaw, 44, 118
+  ; Wide presses shift cavity resonance slightly deeper & fuller
+  iWideLow  = 1.0 - (1.0 - iSharpness) * 0.24
+  iCavRaw   = (62 + (1800 / iBaseSafe) * 11.5) * iCavJit * iWideLow
+  iCavFreq  limit iCavRaw, 58, 138
 
-  aCavMode  mode aThudExc, iCavFreq, 3.0
-  aThudRaw  lowpass2 aCavMode, iCavFreq * 2.8, 0.8
+  aCavMode  mode aThudExc, iCavFreq, 3.2
+  aThudRaw  lowpass2 aCavMode, iCavFreq * 3.1, 0.85
 
-  iSnapGain = (0.18 + iSharpness * 0.82) * 0.32
-  iThudGain = (1.0 - iSharpness * 0.78) * 0.58
+  ; Dramatic 2C dynamic shift: sharp taps stay feather-clean, wide taps thump deeply
+  iWide     = 1.0 - iSharpness
+  iSnapGain = (0.14 + iSharpness * 0.86) * 0.36
+  iThudGain = 0.06 + pow(iWide, 1.25) * 0.86
 
   aOut = (aSnapRaw * iSnapGain + aThudRaw * iThudGain) * iAmp
   xout aOut

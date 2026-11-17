@@ -2,6 +2,7 @@ import { Csound } from 'https://cdn.jsdelivr.net/npm/@csound/browser@7.0.0/dist/
 
 const surface = document.getElementById('touchSurface');
 const statusEl = document.getElementById('status');
+const telemetryEl = document.getElementById('telemetry');
 
 const ORC_MODULES = [
   'dsp/core/00_header.orc',
@@ -31,6 +32,13 @@ function setStatus(text, hideAfterMs = 0) {
   }
 }
 
+function showTelemetry(text) {
+  telemetryEl.textContent = text;
+  telemetryEl.classList.add('show');
+  clearTimeout(showTelemetry._t);
+  showTelemetry._t = setTimeout(() => telemetryEl.classList.remove('show'), 1800);
+}
+
 function withTimeout(promise, ms, label) {
   return Promise.race([
     promise,
@@ -54,10 +62,106 @@ function primeAndroidAudio(ctx) {
   } catch (_) {}
 }
 
+/**
+ * I-1: Self-Calibrating Touch Sensor
+ * Learns this specific device's smallest fingertip vs. widest thumb footprint.
+ */
+const touchCal = {
+  minArea: 220,
+  maxArea: 620,
+  minPressure: 1.0,
+  maxPressure: 0.0,
+  samples: 0,
+
+  measure(e) {
+    if (e.pointerType === 'mouse') {
+      const isWide = e.shiftKey || e.button === 2;
+      const sharpness = isWide
+        ? 0.07 + Math.random() * 0.14
+        : 0.72 + Math.random() * 0.24;
+      return { sharpness, area: isWide ? 900 : 180 };
+    }
+
+    const w = e.width && e.width > 0 ? e.width : 18;
+    const h = e.height && e.height > 0 ? e.height : 18;
+    const area = Math.max(25, w * h);
+    const p = e.pressure && e.pressure > 0 ? e.pressure : 0.5;
+
+    this.samples++;
+    // Gently pull bounds back inward slightly over time so one palm brush self-heals
+    if (this.samples > 4) {
+      this.minArea += 1.5;
+      this.maxArea -= 2.5;
+      if (this.maxArea - this.minArea < 160) {
+        this.maxArea = this.minArea + 160;
+      }
+    }
+
+    if (area < this.minArea) this.minArea = area;
+    if (area > this.maxArea) this.maxArea = area;
+    if (p < this.minPressure) this.minPressure = p;
+    if (p > this.maxPressure) this.maxPressure = p;
+
+    // Log-area scaling reflects human capacitive contact radius perceptually
+    const logMin = Math.log(Math.max(25, this.minArea));
+    const logMax = Math.log(Math.max(this.minArea + 120, this.maxArea));
+    const logArea = Math.log(area);
+    let areaNorm = (logArea - logMin) / Math.max(0.25, logMax - logMin);
+    areaNorm = Math.max(0, Math.min(1, areaNorm));
+
+    // Only incorporate pressure if device actually reports varying pressure
+    let wideScore = areaNorm;
+    const pSpan = this.maxPressure - this.minPressure;
+    if (pSpan > 0.08) {
+      const pNorm = Math.max(0, Math.min(1, (p - this.minPressure) / pSpan));
+      wideScore = areaNorm * 0.70 + pNorm * 0.30;
+    }
+
+    const sharpness = Math.max(0.05, Math.min(0.98, 1.0 - wideScore));
+    return { sharpness, area: Math.round(area) };
+  }
+};
+
+/**
+ * V-1: 5 Natural Fluid Drop Archetypes weighted by sharpness & anti-repeat memory
+ * 1: clean_plop, 2: doublet, 3: skimmer, 4: submerged, 5: effervescence
+ */
+const ARCH_NAMES = ['', 'clean plop', 'doublet', 'skimmer', 'submerged', 'effervescence'];
+let lastArch = 0;
+
+function pickArchetype(sharpness) {
+  // Base weights for [clean_plop, doublet, skimmer, submerged, effervescence]
+  const weights = [
+    0.22 + sharpness * 0.16,        // 1: clean plop
+    0.22 + (1 - Math.abs(sharpness - 0.5)) * 0.12, // 2: coupled doublet
+    0.10 + sharpness * 0.28,        // 3: surface skimmer (more common on sharp/light)
+    0.08 + (1 - sharpness) * 0.34,  // 4: submerged hollow pocket (more common on wide/heavy)
+    0.14 + sharpness * 0.14         // 5: micro-effervescence
+  ];
+
+  // Reduce immediate repeat probability so consecutive taps feel fresh
+  if (lastArch >= 1 && lastArch <= 5) {
+    weights[lastArch - 1] *= 0.28;
+  }
+
+  const total = weights.reduce((a, b) => a + b, 0);
+  let r = Math.random() * total;
+  let chosen = 1;
+  for (let i = 0; i < weights.length; i++) {
+    r -= weights[i];
+    if (r <= 0) {
+      chosen = i + 1;
+      break;
+    }
+  }
+  lastArch = chosen;
+  return chosen;
+}
+
 async function fetchOrcModules(sampleRate) {
   return Promise.all(
     ORC_MODULES.map(async (path) => {
-      const res = await fetch(`./${path}?v=6`, { cache: 'no-store' });
+      const res = await fetch(`./${path}?v=7`, { cache: 'no-store' });
       if (!res.ok) throw new Error(`Failed loading ${path} (${res.status})`);
       let code = await res.text();
       if (path === 'dsp/core/00_header.orc') {
@@ -184,31 +288,31 @@ function triggerDroplet(e) {
   const nx = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
   const ny = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
 
-  const w = e.width && e.width > 0 ? e.width : 20;
-  const h = e.height && e.height > 0 ? e.height : 20;
-  const area = w * h;
+  const { sharpness, area } = touchCal.measure(e);
+  const arch = pickArchetype(sharpness);
 
-  let sharpness = 1.0 - Math.max(0, Math.min(1, (area - 140) / 1400));
-  if (e.pointerType === 'mouse') {
-    sharpness = e.shiftKey ? 0.12 : (0.25 + Math.random() * 0.68);
-  } else {
-    sharpness = Math.max(0.06, Math.min(0.98, sharpness + (Math.random() - 0.5) * 0.14));
-  }
+  // Wider presses naturally carry slightly fuller physical displacement energy
+  const wideFactor = 1.0 - sharpness;
+  const amp = Math.max(
+    0.34,
+    Math.min(0.95, 0.46 + wideFactor * 0.36 + (Math.random() - 0.5) * 0.14)
+  );
 
-  const pressure = e.pressure && e.pressure > 0 ? e.pressure : 0.5;
-  const amp = Math.max(0.28, Math.min(0.95, 0.42 + pressure * 0.42 + (Math.random() - 0.5) * 0.14));
-
-  const minFreq = 190;
+  // Sharp tips favor smaller crisp drops; wide thumbs shift slightly deeper
+  const minFreq = 185;
   const maxFreq = 1480;
-  const pitchNorm = 1.0 - ny;
+  const pitchNorm = Math.max(0, Math.min(1, (1.0 - ny) + (sharpness - 0.5) * 0.12));
   const baseFreq = minFreq * Math.pow(maxFreq / minFreq, pitchNorm);
 
   const richness = nx;
   const pan = 0.15 + nx * 0.70;
 
-  const dur = 1.6;
-  const msg = `i 10 0 ${dur.toFixed(3)} ${baseFreq.toFixed(2)} ${amp.toFixed(3)} ${pan.toFixed(3)} ${sharpness.toFixed(3)} ${richness.toFixed(3)}`;
+  // p9 = archetype (1..5)
+  const dur = 1.7;
+  const msg = `i 10 0 ${dur.toFixed(3)} ${baseFreq.toFixed(2)} ${amp.toFixed(3)} ${pan.toFixed(3)} ${sharpness.toFixed(3)} ${richness.toFixed(3)} ${arch}`;
   csound.inputMessage(msg);
+
+  showTelemetry(`sharp ${Math.round(sharpness * 100)}% · ${area}px² · ${ARCH_NAMES[arch]}`);
 }
 
 surface.addEventListener('contextmenu', (e) => e.preventDefault());
