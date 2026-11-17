@@ -9,8 +9,10 @@ const ORC_MODULES = [
   'dsp/physics/10_surface_radiation.orc',
   'dsp/physics/11_impact_cavity.orc',
   'dsp/physics/12_minnaert_bubble.orc',
+  'dsp/physics/13_splash_turbulence.orc',
   'dsp/space/20_open_night_lake.orc',
   'dsp/quadrants/glass_droplets/30_option_a_tap.orc',
+  'dsp/quadrants/glass_droplets/31_splash_clusters.orc',
   'dsp/core/99_master_bus.orc'
 ];
 
@@ -44,7 +46,6 @@ function sleep(ms) {
 
 function primeAndroidAudio(ctx) {
   try {
-    // 1-sample silent pulse unlocks Android Chrome WebAudio synchronously inside gesture
     const buf = ctx.createBuffer(1, 1, ctx.sampleRate);
     const src = ctx.createBufferSource();
     src.buffer = buf;
@@ -56,7 +57,7 @@ function primeAndroidAudio(ctx) {
 async function fetchOrcModules(sampleRate) {
   return Promise.all(
     ORC_MODULES.map(async (path) => {
-      const res = await fetch(`./${path}?v=5`, { cache: 'no-store' });
+      const res = await fetch(`./${path}?v=6`, { cache: 'no-store' });
       if (!res.ok) throw new Error(`Failed loading ${path} (${res.status})`);
       let code = await res.text();
       if (path === 'dsp/core/00_header.orc') {
@@ -94,7 +95,6 @@ async function bootFromGesture() {
       audioCtx = new AudioCtx({ latencyHint: 'interactive' });
     }
     primeAndroidAudio(audioCtx);
-    // Never deadlock waiting indefinitely on resume()
     await Promise.race([audioCtx.resume().catch(() => {}), sleep(350)]);
 
     setStatus('[2/5] Loading Csound 7 WASM...');
@@ -154,7 +154,6 @@ async function bootFromGesture() {
     await csound.inputMessage('i 900 0 -1');
     await csound.inputMessage('i 999 0 -1');
 
-    // Final check in case Android paused AudioContext during WASM fetch
     await Promise.race([audioCtx.resume().catch(() => {}), sleep(250)]);
 
     isReady = true;
@@ -191,9 +190,9 @@ function triggerDroplet(e) {
 
   let sharpness = 1.0 - Math.max(0, Math.min(1, (area - 140) / 1400));
   if (e.pointerType === 'mouse') {
-    sharpness = 0.65 + (Math.random() - 0.5) * 0.35;
+    sharpness = e.shiftKey ? 0.12 : (0.25 + Math.random() * 0.68);
   } else {
-    sharpness = Math.max(0.08, Math.min(0.98, sharpness + (Math.random() - 0.5) * 0.16));
+    sharpness = Math.max(0.06, Math.min(0.98, sharpness + (Math.random() - 0.5) * 0.14));
   }
 
   const pressure = e.pressure && e.pressure > 0 ? e.pressure : 0.5;
@@ -214,7 +213,6 @@ function triggerDroplet(e) {
 
 surface.addEventListener('contextmenu', (e) => e.preventDefault());
 
-// Android requires touchend / pointerup / click for initial AudioContext activation
 surface.addEventListener('touchend', () => {
   if (!isReady || needsTapUnmute) bootFromGesture();
 }, { passive: true });
@@ -231,14 +229,12 @@ surface.addEventListener('click', () => {
   if (!isReady || needsTapUnmute) bootFromGesture();
 });
 
-// Once ready, multi-touch taps trigger immediately on pointerdown
 surface.addEventListener('pointerdown', (e) => {
   if (!isReady || needsTapUnmute) return;
   e.preventDefault();
   triggerDroplet(e);
 });
 
-// Resume cleanly if switching back to Chrome on Fold 6
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && isReady && audioCtx && audioCtx.state === 'suspended') {
     needsTapUnmute = true;
